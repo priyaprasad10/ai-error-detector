@@ -1,4 +1,5 @@
 # backend.py — AI Error Detective Core Engine
+import streamlit as st
 import os
 import re
 import base64
@@ -8,9 +9,11 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_groq import ChatGroq
 from groq import Groq
 
+
 load_dotenv()
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+#GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 
 if not GROQ_API_KEY:
     raise RuntimeError(
