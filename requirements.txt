@@ -6,3 +6,7 @@ python-dotenv
 streamlit
 requests
 pillow
+sentence-transformers
+numpy
+psycopg2-binary
+bcrypt
