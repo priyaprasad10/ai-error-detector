@@ -219,6 +219,116 @@ def save_match_feedback(user_id: int, error_history_id: int, is_helpful: bool):
     conn.close()
 
 
+def get_similar_personal_error(user_id: int, platform: str, query_embedding: list,
+                               similarity_fn, threshold: float = 0.65,
+                               exclude_id: int = None) -> dict | None:
+    """
+    Semantic similarity search within the user's own resolved errors.
+    Used to remind the user of a fix they already found before.
+    """
+    import json
+
+    conn = get_connection()
+    cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    sql = """
+        SELECT id, error_text, resolution_text, platform, resolved_at, embedding
+        FROM error_history
+        WHERE user_id = %s
+          AND is_resolved = TRUE
+          AND platform = %s
+          AND embedding IS NOT NULL
+    """
+    params = [user_id, platform]
+
+    if exclude_id:
+        sql += " AND id != %s"
+        params.append(exclude_id)
+
+    sql += " ORDER BY resolved_at DESC LIMIT 50"
+
+    cur.execute(sql, params)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    best_match = None
+    best_score = threshold
+
+    for row in rows:
+        row_dict   = dict(row)
+        stored_emb = json.loads(row_dict.pop("embedding"))
+        score      = similarity_fn(query_embedding, stored_emb)
+        if score > best_score:
+            best_score = score
+            best_match = row_dict
+
+    return best_match
+
+
+def get_user_trends(user_id: int) -> dict:
+    """Fetch aggregated trend data for the user's error history."""
+    conn = get_connection()
+    cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    # Overall stats
+    cur.execute("""
+        SELECT
+            COUNT(*)                                                AS total,
+            COUNT(CASE WHEN is_resolved = TRUE  THEN 1 END)        AS resolved,
+            COUNT(CASE WHEN severity = 'CRITICAL' THEN 1 END)      AS critical
+        FROM error_history WHERE user_id = %s
+    """, (user_id,))
+    stats = dict(cur.fetchone())
+
+    # By platform
+    cur.execute("""
+        SELECT platform, COUNT(*) AS count
+        FROM error_history WHERE user_id = %s
+        GROUP BY platform ORDER BY count DESC
+    """, (user_id,))
+    by_platform = [dict(r) for r in cur.fetchall()]
+
+    # By severity
+    cur.execute("""
+        SELECT severity, COUNT(*) AS count
+        FROM error_history WHERE user_id = %s
+        GROUP BY severity ORDER BY count DESC
+    """, (user_id,))
+    by_severity = [dict(r) for r in cur.fetchall()]
+
+    # By day of week
+    cur.execute("""
+        SELECT EXTRACT(DOW FROM created_at) AS day_num,
+               TO_CHAR(created_at, 'Dy')   AS day,
+               COUNT(*)                    AS count
+        FROM error_history WHERE user_id = %s
+        GROUP BY day_num, day ORDER BY day_num
+    """, (user_id,))
+    by_day = [dict(r) for r in cur.fetchall()]
+
+    # Monthly trend (last 6 months)
+    cur.execute("""
+        SELECT TO_CHAR(DATE_TRUNC('month', created_at), 'Mon YYYY') AS month,
+               DATE_TRUNC('month', created_at)                      AS month_date,
+               COUNT(*)                                             AS count
+        FROM error_history
+        WHERE user_id = %s AND created_at >= NOW() - INTERVAL '6 months'
+        GROUP BY month, month_date ORDER BY month_date
+    """, (user_id,))
+    by_month = [dict(r) for r in cur.fetchall()]
+
+    cur.close()
+    conn.close()
+    return {
+        "stats":       stats,
+        "by_platform": by_platform,
+        "by_severity": by_severity,
+        "by_day":      by_day,
+        "by_month":    by_month,
+    }
+
+
 # ══════════════════════════════════════════════════════════
 # TEAMS
 # ══════════════════════════════════════════════════════════
