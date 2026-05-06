@@ -1,33 +1,113 @@
 # backend.py — AI Error Detective Core Engine
 import os
 import re
+import time
 import base64
 import numpy as np
+import requests as _http
+from pathlib import Path
 from dotenv import load_dotenv
 from langchain_core.prompts import PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langchain_groq import ChatGroq
-from groq import Groq
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).parent / ".env")
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+_AICORE_BASE          = os.getenv("AICORE_BASE_URL", "").rstrip("/")
+_AICORE_RG            = os.getenv("AICORE_RESOURCE_GROUP", "default")
+_AICORE_DEPLOYMENT_ID = os.getenv("AICORE_DEPLOYMENT_ID", "")
+_AICORE_MODEL         = "gpt-5"
 
-if not GROQ_API_KEY:
+# Module-level cache — survives Streamlit reruns within the same worker process
+_TOKEN_CACHE: dict = {}
+_DEP_CACHE:   dict = {}
+
+
+def _get_token() -> str:
+    now = time.time()
+    if _TOKEN_CACHE.get("token") and now < _TOKEN_CACHE.get("expires_at", 0) - 300:
+        return _TOKEN_CACHE["token"]
+    r = _http.post(
+        os.getenv("AICORE_AUTH_URL", "").rstrip("/") + "/oauth/token",
+        data={"grant_type": "client_credentials"},
+        auth=(os.getenv("AICORE_CLIENT_ID", ""), os.getenv("AICORE_CLIENT_SECRET", "")),
+        timeout=30,
+    )
+    r.raise_for_status()
+    data = r.json()
+    _TOKEN_CACHE["token"]      = data["access_token"]
+    _TOKEN_CACHE["expires_at"] = now + float(data.get("expires_in", 3600))
+    return _TOKEN_CACHE["token"]
+
+
+def _get_dep_url(model: str = _AICORE_MODEL) -> str:
+    if model in _DEP_CACHE:
+        return _DEP_CACHE[model]
+    # If deployment ID is set directly, skip the API lookup entirely
+    if _AICORE_DEPLOYMENT_ID:
+        url = f"{_AICORE_BASE}/v2/inference/deployments/{_AICORE_DEPLOYMENT_ID}"
+        _DEP_CACHE[model] = url
+        return url
+    token = _get_token()
+    r = _http.get(
+        f"{_AICORE_BASE}/v2/lm/deployments",
+        headers={"Authorization": f"Bearer {token}", "AI-Resource-Group": _AICORE_RG},
+        timeout=30,
+    )
+    r.raise_for_status()
+    for dep in r.json().get("resources", []):
+        if dep.get("status") != "RUNNING":
+            continue
+        model_name = (
+            dep.get("details", {})
+               .get("resources", {})
+               .get("backend_details", {})
+               .get("model", {})
+               .get("name", "")
+            or dep.get("configurationName", "")
+        )
+        if model.lower() in model_name.lower():
+            url = f"{_AICORE_BASE}/v2/inference/deployments/{dep['id']}"
+            _DEP_CACHE[model] = url
+            return url
     raise RuntimeError(
-        "GROQ_API_KEY not found!\n"
-        "Create a .env file and add:\n"
-        "GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxx"
+        f"No running '{model}' deployment found in AI Core. "
+        "Check your AI Core cockpit and ensure the deployment is in RUNNING state."
     )
 
-# ── LLM Setup ──
-llm = ChatGroq(
-    api_key=GROQ_API_KEY,
-    temperature=0.3,
-    model="llama-3.3-70b-versatile"
-)
-parser = StrOutputParser()
-client = Groq(api_key=GROQ_API_KEY)
+
+def _aicore_chat(messages: list, max_completion_tokens: int = None) -> str:
+    token   = _get_token()
+    dep_url = _get_dep_url(_AICORE_MODEL)
+    body: dict = {"model": _AICORE_MODEL, "messages": messages}
+    if max_completion_tokens:
+        body["max_completion_tokens"] = max_completion_tokens
+    r = _http.post(
+        f"{dep_url}/v1/chat/completions",
+        json=body,
+        headers={
+            "Authorization":     f"Bearer {token}",
+            "AI-Resource-Group": _AICORE_RG,
+            "Content-Type":      "application/json",
+        },
+        timeout=120,
+    )
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"].strip()
+
+
+def warm_up_aicore():
+    """Pre-fetch OAuth token + deployment URL at startup to avoid cold-start lag."""
+    try:
+        _get_dep_url("gpt-5")
+    except Exception:
+        pass
+
+
+def _ai_core_invoke(prompt_str: str, system_prompt: str = None) -> str:
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt_str})
+    return _aicore_chat(messages)
 
 
 # ─────────────────────────────────────────────
@@ -388,12 +468,11 @@ def analyze_error(error_text: str, error_type: str) -> dict:
         input_variables=["error_text", "error_type", "platform_context"],
         template=ERROR_ANALYSIS_PROMPT
     )
-    chain    = prompt | llm | parser
-    response = chain.invoke({
-        "error_text":       error_text[:5000],
-        "error_type":       error_type,
-        "platform_context": platform_context,
-    })
+    response = _ai_core_invoke(prompt.format(
+        error_text=error_text[:5000],
+        error_type=error_type,
+        platform_context=platform_context,
+    ), system_prompt=platform_context)
     severity = extract_severity(response)
 
     return {
@@ -419,12 +498,11 @@ def get_quick_fix(error_text: str, error_type: str) -> str:
         input_variables=["error_text", "error_type", "platform_context"],
         template=QUICK_FIX_PROMPT
     )
-    chain = prompt | llm | parser
-    return chain.invoke({
-        "error_text":       error_text[:2000],
-        "error_type":       error_type,
-        "platform_context": platform_context,
-    })
+    return _ai_core_invoke(prompt.format(
+        error_text=error_text[:2000],
+        error_type=error_type,
+        platform_context=platform_context,
+    ), system_prompt=platform_context)
 
 
 def chat_about_error(
@@ -445,18 +523,17 @@ def chat_about_error(
         ],
         template=CHAT_PROMPT
     )
-    chain = prompt | llm | parser
-    return chain.invoke({
-        "error_text":        error_text[:2000],
-        "previous_analysis": previous_analysis[:3000],
-        "question":          question,
-        "error_type":        error_type,
-        "platform_context":  platform_context,
-    })
+    return _ai_core_invoke(prompt.format(
+        error_text=error_text[:2000],
+        previous_analysis=previous_analysis[:3000],
+        question=question,
+        error_type=error_type,
+        platform_context=platform_context,
+    ), system_prompt=platform_context)
 
 
 def extract_text_from_image(image_file) -> str:
-    """Extract text from SAP error screenshot using Groq Vision LLM."""
+    """Extract text from SAP error screenshot using SAP AI Core Claude vision."""
     try:
         from PIL import Image
 
@@ -469,8 +546,8 @@ def extract_text_from_image(image_file) -> str:
         fmt  = (img.format or "PNG").lower()
         mime = f"image/{fmt}"
 
-        response = client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
+        # Anthropic-native image format with OpenAI-compatible fallback
+        response = _aicore_chat(
             messages=[{
                 "role": "user",
                 "content": [
@@ -489,17 +566,17 @@ def extract_text_from_image(image_file) -> str:
                     }
                 ]
             }],
-            max_tokens=1000,
+            max_completion_tokens=1000,
         )
 
-        extracted = response.choices[0].message.content.strip()
-        return extracted if extracted else "No text found in image."
+        return response if response else "No text found in image."
 
     except Exception as e:
-        return (
-            f"Could not read image: {str(e)}\n"
-            "Please copy-paste the error text in the Analyze Error tab."
-        )
+        err = str(e)
+        # If vision is unsupported, return a clean message instead of a raw error
+        if "image" in err.lower() or "vision" in err.lower() or "multimodal" in err.lower() or "400" in err:
+            return "Could not read image: Vision not supported for this model — please paste the error text manually."
+        return f"Could not read image: {err}\nPlease copy-paste the error text in the Analyze Error tab."
 
 
 def get_embedding(text: str, model) -> list:
@@ -563,7 +640,7 @@ def format_download_report(result: dict, chat_history: list) -> str:
     lines += [
         "=" * 60,
         "Generated by AI Error Detective",
-        "Built with Groq LLaMA 3.3 + LangChain + Streamlit",
+        "Built with SAP AI Core GPT-5 + Streamlit",
         "=" * 60,
     ]
     return "\n".join(lines)
