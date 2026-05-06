@@ -3,7 +3,8 @@ from database import (save_history, get_history, init_db, mark_resolved,
                        create_team, join_team, leave_team,
                        get_user_teams, get_team_members,
                        get_team_resolved_errors, get_similar_team_error,
-                       save_match_feedback)
+                       save_match_feedback, get_similar_personal_error,
+                       get_user_trends)
 from auth import register_user, login_user
 import streamlit as st
 from datetime import datetime
@@ -191,40 +192,38 @@ if not st.session_state.logged_in:
 
         if st.session_state.auth_mode == "login":
             st.markdown("<div style='text-align:center;font-size:1.4rem;font-weight:800;color:#00D4FF;margin-bottom:20px'>Welcome Back 👋</div>", unsafe_allow_html=True)
-            with st.form(key="login_form"):
-                login_username = st.text_input("👤 Username", placeholder="Enter your username")
-                login_password = st.text_input("🔒 Password", type="password", placeholder="Enter your password")
-                if st.form_submit_button("🚀 Login", type="primary", use_container_width=True):
-                    if login_username and login_password:
-                        result = login_user(login_username, login_password)
-                        if result["success"]:
-                            st.session_state.logged_in = True
-                            st.session_state.user_id   = result["user_id"]
-                            st.session_state.username  = result["username"]
-                            st.rerun()
-                        else:
-                            st.error(f"❌ {result['message']}")
+            login_username = st.text_input("👤 Username", placeholder="Enter your username", key="login_user")
+            login_password = st.text_input("🔒 Password", type="password", placeholder="Enter your password", key="login_pass")
+            if st.button("🚀 Login", type="primary", use_container_width=True, key="login_submit"):
+                if login_username and login_password:
+                    result = login_user(login_username, login_password)
+                    if result["success"]:
+                        st.session_state.logged_in = True
+                        st.session_state.user_id   = result["user_id"]
+                        st.session_state.username  = result["username"]
+                        st.rerun()
                     else:
-                        st.warning("⚠️ Please enter both username and password.")
+                        st.error(f"❌ {result['message']}")
+                else:
+                    st.warning("⚠️ Please enter both username and password.")
         else:
             st.markdown("<div style='text-align:center;font-size:1.4rem;font-weight:800;color:#7B2FFF;margin-bottom:20px'>Create Account 🆕</div>", unsafe_allow_html=True)
-            with st.form(key="register_form"):
-                reg_username  = st.text_input("👤 Choose Username", placeholder="e.g. john_dev")
-                reg_password  = st.text_input("🔒 Choose Password", type="password", placeholder="Min 6 characters")
-                reg_password2 = st.text_input("🔒 Confirm Password", type="password", placeholder="Repeat password")
-                if st.form_submit_button("✅ Create Account", type="primary", use_container_width=True):
-                    if not reg_username or not reg_password:
-                        st.warning("⚠️ Please fill all fields.")
-                    elif reg_password != reg_password2:
-                        st.error("❌ Passwords do not match.")
+            reg_username  = st.text_input("👤 Choose Username", placeholder="e.g. john_dev", key="reg_user")
+            reg_password  = st.text_input("🔒 Choose Password", type="password", placeholder="Min 6 characters", key="reg_pass")
+            reg_password2 = st.text_input("🔒 Confirm Password", type="password", placeholder="Repeat password", key="reg_pass2")
+            if st.button("✅ Create Account", type="primary", use_container_width=True, key="reg_submit"):
+                if not reg_username or not reg_password:
+                    st.warning("⚠️ Please fill all fields.")
+                elif reg_password != reg_password2:
+                    st.error("❌ Passwords do not match.")
+                else:
+                    result = register_user(reg_username, reg_password)
+                    if result["success"]:
+                        st.success(f"✅ {result['message']} Please login now.")
+                        st.session_state.auth_mode = "login"
+                        st.rerun()
                     else:
-                        result = register_user(reg_username, reg_password)
-                        if result["success"]:
-                            st.success(f"✅ {result['message']} Please login now.")
-                            st.session_state.auth_mode = "login"
-                            st.rerun()
-                        else:
-                            st.error(f"❌ {result['message']}")
+                        st.error(f"❌ {result['message']}")
     st.stop()
 
 
@@ -433,12 +432,13 @@ if st.session_state.show_about:
 # ══════════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════════
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🔍 Analyze Error",
     "💬 Chat with Detective",
     "📋 Session History",
     "📜 My Error History",
     "👥 My Team",
+    "📊 My Trends",
 ])
 
 
@@ -519,79 +519,108 @@ with tab1:
         else:
             mismatch = detect_platform_mismatch(final_error_text, error_type)
             if mismatch["is_mismatch"]:
-                mismatch_warning.warning(
-                    f"⚠️ **Platform Mismatch Detected!** This looks like a **{mismatch['detected_platform']}** error "
-                    f"but you selected **{error_type}**. Consider switching platform in the sidebar."
+                mismatch_warning.markdown(
+                    f"<div style='background:linear-gradient(135deg,#FFB80022,#FF6B0022);"
+                    f"border:2px solid #FFB800;border-radius:12px;padding:16px 20px;margin:10px 0'>"
+                    f"<div style='font-size:1.1rem;font-weight:800;color:#FFB800;margin-bottom:6px'>"
+                    f"⚠️ Platform Mismatch Detected — Analysis Blocked</div>"
+                    f"<div style='color:#ffe082;font-size:0.9rem'>"
+                    f"This looks like a <b style='color:#FFA000'>{mismatch['detected_platform']}</b> error "
+                    f"but you selected <b style='color:#FFB800'>{error_type}</b>.<br>"
+                    f"👉 Please switch to <b style='color:#FFA000'>{mismatch['detected_platform']}</b> "
+                    f"in the sidebar and try again.</div>"
+                    f"</div>",
+                    unsafe_allow_html=True
                 )
-            with st.spinner(f"🔍 AI Detective investigating your {error_type} error..."):
-                try:
-                    result = analyze_error(final_error_text, error_type)
-                    st.session_state.current_result        = result
-                    st.session_state.current_is_resolved   = False
-                    st.session_state.similar_team_resolved = False
-                    st.session_state.current_match_id      = None
-                    st.session_state.match_feedback_given  = False
-                    st.session_state.chat_history          = []
-
-                    fp = error_fingerprint(final_error_text, error_type)
-                    query_embedding = get_embedding(final_error_text, embed_model)
-
-                    if fp not in st.session_state.analyzed_fingerprints:
-                        # ── Count increases HERE and only here ──────
-                        st.session_state.analyzed_fingerprints.append(fp)
-                        st.session_state.session_history.append({
-                            "severity":    result["severity"],
-                            "type":        error_type,
-                            "preview":     final_error_text[:80] + "...",
-                            "time":        datetime.now().strftime("%H:%M"),
-                            "result":      result,
-                            "is_resolved": False,
-                            "db_id":       None,
-                        })
-                        # ── Save to PostgreSQL ───────────────────────
-                        db_id = save_history(
-                            user_id    = st.session_state.user_id,
-                            error_text = final_error_text,
-                            analysis   = result["analysis"],
-                            severity   = result["severity"],
-                            platform   = error_type,
-                            embedding  = query_embedding,
-                        )
-                        st.session_state.current_db_id = db_id
-                        st.session_state.session_history[-1]["db_id"] = db_id
-                    else:
-                        st.info("ℹ️ This same error was already counted in this session.")
-
-                    # ── Check team pool for similar resolved error (always runs) ──
+            else:
+                with st.spinner(f"🔍 AI Detective investigating your {error_type} error..."):
                     try:
-                        user_teams = get_user_teams(st.session_state.user_id)
-                        for team in user_teams:
-                            match = get_similar_team_error(
-                                team_id         = team['team_id'],
-                                platform        = error_type,
-                                query_embedding = query_embedding,
-                                similarity_fn   = cosine_similarity,
-                            )
-                            if match:
-                                ts = match['resolved_at']
-                                ts_str = ts.strftime('%d %b %Y') if hasattr(ts, 'strftime') else str(ts)
-                                resolver = "you" if match['resolved_by'] == st.session_state.username else match['resolved_by']
-                                fix_label = "Your fix:" if resolver == "you" else "Their fix:"
-                                similar_error_box.info(
-                                    f"💡 **Similar error resolved in your team '{team['team_name']}'!**\n\n"
-                                    f"**Resolved by:** {resolver} on {ts_str}\n\n"
-                                    f"**{fix_label}** {match['resolution_text'][:400]}{'...' if len(match['resolution_text'] or '') > 400 else ''}"
-                                )
-                                st.session_state.similar_team_resolved = True
-                                st.session_state.current_match_id      = match['id']
-                                st.session_state.match_feedback_given  = False
-                                break
-                    except Exception as e:
-                        st.warning(f"⚠️ Team check failed: {str(e)}")
+                        result = analyze_error(final_error_text, error_type)
+                        st.session_state.current_result        = result
+                        st.session_state.current_is_resolved   = False
+                        st.session_state.similar_team_resolved = False
+                        st.session_state.current_match_id      = None
+                        st.session_state.match_feedback_given  = False
+                        st.session_state.chat_history          = []
 
-                except Exception as e:
-                    st.error(f"❌ Analysis failed: {str(e)}")
-                    st.stop()
+                        fp = error_fingerprint(final_error_text, error_type)
+                        query_embedding = get_embedding(final_error_text, embed_model)
+
+                        if fp not in st.session_state.analyzed_fingerprints:
+                            st.session_state.analyzed_fingerprints.append(fp)
+                            st.session_state.session_history.append({
+                                "severity":    result["severity"],
+                                "type":        error_type,
+                                "preview":     final_error_text[:80] + "...",
+                                "time":        datetime.now().strftime("%H:%M"),
+                                "result":      result,
+                                "is_resolved": False,
+                                "db_id":       None,
+                            })
+                            db_id = save_history(
+                                user_id    = st.session_state.user_id,
+                                error_text = final_error_text,
+                                analysis   = result["analysis"],
+                                severity   = result["severity"],
+                                platform   = error_type,
+                                embedding  = query_embedding,
+                            )
+                            st.session_state.current_db_id = db_id
+                            st.session_state.session_history[-1]["db_id"] = db_id
+                        else:
+                            st.info("ℹ️ This same error was already counted in this session.")
+
+                        # ── Check team pool for similar resolved error (always runs) ──
+                        try:
+                            user_teams = get_user_teams(st.session_state.user_id)
+                            for team in user_teams:
+                                match = get_similar_team_error(
+                                    team_id         = team['team_id'],
+                                    platform        = error_type,
+                                    query_embedding = query_embedding,
+                                    similarity_fn   = cosine_similarity,
+                                )
+                                if match:
+                                    ts = match['resolved_at']
+                                    ts_str = ts.strftime('%d %b %Y') if hasattr(ts, 'strftime') else str(ts)
+                                    resolver = "you" if match['resolved_by'] == st.session_state.username else match['resolved_by']
+                                    fix_label = "Your fix:" if resolver == "you" else "Their fix:"
+                                    similar_error_box.info(
+                                        f"💡 **Similar error resolved in your team '{team['team_name']}'!**\n\n"
+                                        f"**Resolved by:** {resolver} on {ts_str}\n\n"
+                                        f"**{fix_label}** {match['resolution_text'][:400]}{'...' if len(match['resolution_text'] or '') > 400 else ''}"
+                                    )
+                                    st.session_state.similar_team_resolved = True
+                                    st.session_state.current_match_id      = match['id']
+                                    st.session_state.match_feedback_given  = False
+                                    break
+                        except Exception as e:
+                            st.warning(f"⚠️ Team check failed: {str(e)}")
+
+                        # ── Check personal resolved errors if no team match ──
+                        if not st.session_state.similar_team_resolved:
+                            try:
+                                personal_match = get_similar_personal_error(
+                                    user_id         = st.session_state.user_id,
+                                    platform        = error_type,
+                                    query_embedding = query_embedding,
+                                    similarity_fn   = cosine_similarity,
+                                    exclude_id      = st.session_state.current_db_id,
+                                )
+                                if personal_match:
+                                    ts = personal_match['resolved_at']
+                                    ts_str = ts.strftime('%d %b %Y') if hasattr(ts, 'strftime') else str(ts)
+                                    similar_error_box.info(
+                                        f"💡 **You resolved a similar error before!**\n\n"
+                                        f"**Resolved on:** {ts_str}\n\n"
+                                        f"**Your previous fix:** {personal_match['resolution_text'][:400]}{'...' if len(personal_match['resolution_text'] or '') > 400 else ''}"
+                                    )
+                            except Exception as e:
+                                st.warning(f"⚠️ Personal history check failed: {str(e)}")
+
+                    except Exception as e:
+                        st.error(f"❌ Analysis failed: {str(e)}")
+                        st.stop()
 
     # ══ QUICK FIX CLICKED ══════════════════════════════
     if quick_fix_clicked and final_error_text:
@@ -1139,6 +1168,192 @@ with tab5:
                                 )
                 except Exception as e:
                     st.error(f"Could not load team errors: {e}")
+
+
+# ══ TAB 6 — My Trends ═════════════════════════════════
+with tab6:
+    import pandas as pd
+    import plotly.express as px
+    import plotly.graph_objects as go
+
+    _PLOT_LAYOUT = dict(
+        template="plotly_dark",
+        paper_bgcolor="#0f1117",
+        plot_bgcolor="#1a1d27",
+        font=dict(family="Inter, sans-serif", color="#e2e8f0"),
+        margin=dict(l=20, r=20, t=40, b=20),
+        xaxis=dict(gridcolor="#2d3048", linecolor="#2d3048"),
+        yaxis=dict(gridcolor="#2d3048", linecolor="#2d3048"),
+    )
+
+    st.markdown(f"### 📊 My Error Trends — *{st.session_state.username}*")
+    st.caption("Personal insights based on your complete error history.")
+
+    try:
+        trends = get_user_trends(st.session_state.user_id)
+        stats  = trends["stats"]
+        total  = stats["total"] or 0
+
+        if total == 0:
+            st.markdown("""
+            <div style='text-align:center;padding:60px 20px;
+                 background:#1a1d27;border-radius:16px;border:1px dashed #2d3048'>
+                <div style='font-size:3rem'>📊</div>
+                <h3 style='color:#888'>No Data Yet</h3>
+                <p style='color:#555'>Analyze some errors and your trends will appear here.</p>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            resolved  = stats["resolved"] or 0
+            critical  = stats["critical"] or 0
+            res_rate  = round((resolved / total) * 100) if total else 0
+
+            # ── Overview metrics ───────────────────────────
+            m1, m2, m3, m4 = st.columns(4)
+            for col, label, val, clr in [
+                (m1, "Total Errors",    total,          "#00D4FF"),
+                (m2, "Resolved",        resolved,       "#00B050"),
+                (m3, "Critical",        critical,       "#FF0000"),
+                (m4, "Resolution Rate", f"{res_rate}%", "#7B2FFF"),
+            ]:
+                with col:
+                    st.markdown(
+                        f"<div class='stat-box'>"
+                        f"<div style='font-size:2rem;font-weight:800;color:{clr}'>{val}</div>"
+                        f"<div style='color:#888;font-size:0.8rem'>{label}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            col_left, col_right = st.columns(2)
+
+            # ── Errors by Platform ─────────────────────────
+            with col_left:
+                st.markdown("#### 🎯 Errors by Platform")
+                if trends["by_platform"]:
+                    df_plat = pd.DataFrame(trends["by_platform"])
+                    fig_plat = px.bar(
+                        df_plat, x="platform", y="count",
+                        color="count",
+                        color_continuous_scale=[[0, "#3B1F7F"], [1, "#7B2FFF"]],
+                        labels={"platform": "Platform", "count": "Errors"},
+                        title="Errors by Platform",
+                    )
+                    fig_plat.update_layout(**_PLOT_LAYOUT, coloraxis_showscale=False,
+                                           title_font_color="#7B2FFF")
+                    fig_plat.update_traces(
+                        marker_line_width=0,
+                        hovertemplate="<b>%{x}</b><br>Errors: %{y}<extra></extra>",
+                    )
+                    st.plotly_chart(fig_plat, use_container_width=True)
+                else:
+                    st.caption("No data yet.")
+
+            # ── Errors by Severity ─────────────────────────
+            with col_right:
+                st.markdown("#### 🔴 Errors by Severity")
+                if trends["by_severity"]:
+                    _sev_color_map = {
+                        "CRITICAL": "#FF0000", "HIGH": "#FF6B00",
+                        "MEDIUM": "#FFB800", "LOW": "#00B050", "UNKNOWN": "#808080",
+                    }
+                    df_sev = pd.DataFrame(trends["by_severity"])
+                    df_sev["color"] = df_sev["severity"].map(
+                        lambda s: _sev_color_map.get(s, "#808080")
+                    )
+                    fig_sev = px.bar(
+                        df_sev, x="severity", y="count",
+                        color="severity",
+                        color_discrete_map=_sev_color_map,
+                        labels={"severity": "Severity", "count": "Errors"},
+                        title="Errors by Severity",
+                    )
+                    fig_sev.update_layout(**_PLOT_LAYOUT, showlegend=False,
+                                          title_font_color="#FF6B00")
+                    fig_sev.update_traces(
+                        marker_line_width=0,
+                        hovertemplate="<b>%{x}</b><br>Errors: %{y}<extra></extra>",
+                    )
+                    st.plotly_chart(fig_sev, use_container_width=True)
+                else:
+                    st.caption("No data yet.")
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            col_left2, col_right2 = st.columns(2)
+
+            # ── Errors by Day of Week ──────────────────────
+            with col_left2:
+                st.markdown("#### 📅 Errors by Day of Week")
+                if trends["by_day"]:
+                    day_order = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+                    df_day = pd.DataFrame(trends["by_day"])
+                    df_day["day"] = df_day["day"].str.strip()
+                    df_day = df_day.set_index("day").reindex(
+                        [d for d in day_order if d in df_day.index]
+                    ).reset_index().dropna()
+                    fig_day = px.bar(
+                        df_day, x="day", y="count",
+                        color="count",
+                        color_continuous_scale=[[0, "#004D7A"], [1, "#00D4FF"]],
+                        labels={"day": "Day", "count": "Errors"},
+                        title="Errors by Day of Week",
+                        category_orders={"day": day_order},
+                    )
+                    fig_day.update_layout(**_PLOT_LAYOUT, coloraxis_showscale=False,
+                                          title_font_color="#00D4FF")
+                    fig_day.update_traces(
+                        marker_line_width=0,
+                        hovertemplate="<b>%{x}</b><br>Errors: %{y}<extra></extra>",
+                    )
+                    st.plotly_chart(fig_day, use_container_width=True)
+                else:
+                    st.caption("No data yet.")
+
+            # ── Monthly Trend ──────────────────────────────
+            with col_right2:
+                st.markdown("#### 📈 Monthly Trend (Last 6 Months)")
+                if trends["by_month"]:
+                    df_month = pd.DataFrame(trends["by_month"])
+                    fig_month = go.Figure()
+                    fig_month.add_trace(go.Scatter(
+                        x=df_month["month"],
+                        y=df_month["count"],
+                        mode="lines+markers",
+                        line=dict(color="#00B050", width=3),
+                        marker=dict(size=8, color="#00D480",
+                                    line=dict(color="#00B050", width=2)),
+                        fill="tozeroy",
+                        fillcolor="rgba(0,176,80,0.1)",
+                        hovertemplate="<b>%{x}</b><br>Errors: %{y}<extra></extra>",
+                        name="Errors",
+                    ))
+                    fig_month.update_layout(
+                        **_PLOT_LAYOUT,
+                        title="Monthly Error Volume",
+                        title_font_color="#00B050",
+                        showlegend=False,
+                    )
+                    st.plotly_chart(fig_month, use_container_width=True)
+                else:
+                    st.caption("No data yet.")
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            # ── Key Insight ────────────────────────────────
+            st.markdown("#### 💡 Key Insight")
+            if trends["by_platform"]:
+                top_platform = trends["by_platform"][0]
+                top_pct      = round((top_platform["count"] / total) * 100)
+                st.info(
+                    f"**{top_pct}%** of your errors are **{top_platform['platform']}**-related. "
+                    f"You've resolved **{res_rate}%** of all errors you've analyzed."
+                )
+
+    except Exception as e:
+        st.error(f"❌ Could not load trends: {str(e)}")
 
 
 # ── Footer ─────────────────────────────────────────────
