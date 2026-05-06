@@ -21,6 +21,7 @@ from backend import (
     format_download_report,
     get_embedding,
     cosine_similarity,
+    warm_up_aicore,
 )
 
 init_db()
@@ -39,6 +40,12 @@ def load_embed_model():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
 embed_model = load_embed_model()
+
+@st.cache_resource(show_spinner=False)
+def _init_aicore():
+    warm_up_aicore()
+
+_init_aicore()
 
 st.markdown("""
 <style>
@@ -310,7 +317,7 @@ with st.sidebar:
              -webkit-background-clip:text; -webkit-text-fill-color:transparent;'>
             AI Error Detective
         </div>
-        <div style='color:#888; font-size:0.8rem'>Powered by Groq LLaMA 3.3</div>
+        <div style='color:#888; font-size:0.8rem'>Powered by SAP AI Core · GPT-5</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -420,10 +427,9 @@ if st.session_state.show_about:
         <p style='color:#aaa'>Select your platform and the AI locks into that ecosystem.
         Every analysis and follow-up is specific to your selected platform.</p>
         <div style='text-align:center;margin-top:20px;padding:15px;background:#0d1117;border-radius:10px'>
-            <span style='color:#888'>Built with </span><b style='color:#00D4FF'>Groq LLaMA 3.3</b>
-            <span style='color:#888'> · </span><b style='color:#7B2FFF'>LangChain</b>
+            <span style='color:#888'>Built with </span><b style='color:#00D4FF'>SAP AI Core GPT-5</b>
             <span style='color:#888'> · </span><b style='color:#FF6B6B'>Streamlit</b>
-            <span style='color:#888'> · 100% Free AI APIs</span>
+            <span style='color:#888'> · SAP DCOM 2026</span>
         </div>
     </div>""", unsafe_allow_html=True)
     st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -1361,8 +1367,8 @@ st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 st.markdown(
     "<div style='text-align:center;color:#555;padding:10px;font-size:0.85rem'>"
     "🔍 <b style='color:#00D4FF'>AI Error Detective</b> · Built for SAP DCOM 2026 · "
-    "Powered by <b style='color:#7B2FFF'>Groq LLaMA 3.3</b> + "
-    "<b style='color:#FF6B6B'>LangChain</b> + <b style='color:#00D4FF'>Streamlit</b> "
+    "Powered by <b style='color:#7B2FFF'>SAP AI Core GPT-5</b> + "
+    "<b style='color:#00D4FF'>Streamlit</b> "
     "· 100% Free AI Tools"
     "</div>",
     unsafe_allow_html=True
