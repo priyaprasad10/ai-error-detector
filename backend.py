@@ -365,7 +365,7 @@ def detect_platform_mismatch(error_text: str, selected_platform: str) -> dict:
     selected_score = scores.get(selected_platform, 0)
 
     is_mismatch = (
-        detected_score >= 2
+        detected_score >= 1
         and detected_platform != selected_platform
         and selected_score == 0
     )
@@ -602,7 +602,9 @@ Analyze it strictly within this platform's context and respond in EXACT format:
 [3 bullet points to prevent this error in future — specific to {error_type}]
 
 ## 📚 SAP REFERENCES
-[Relevant SAP Notes, {error_type} documentation links, transaction codes, or official guides]
+[List relevant SAP Note topics and descriptions (e.g. "SAP Note ~2345678 — addresses X in {error_type}").
+Note numbers are approximate — always verify in SAP Support Portal (support.sap.com).
+Also include relevant transaction codes, official SAP documentation links, or Help Portal pages.]
 ---
 
 ERROR DETAILS:
